@@ -272,6 +272,8 @@ export const TableItem = React.memo(function TableItem({
                 <DropdownMenuTrigger asChild>
                   <button
                     className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
+                    aria-label={`Actions for ${table.name}`}
+                    title={`Actions for ${table.name}`}
                     onClick={(e) => e.stopPropagation()}
                   >
                     <EllipsisVertical

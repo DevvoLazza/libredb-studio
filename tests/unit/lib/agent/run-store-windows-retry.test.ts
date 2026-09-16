@@ -202,6 +202,7 @@ describe("AgentRunStore — transient Windows existence probes (#900)", () => {
     await service.runStep(run.runId, { stepId: "step_1", tool: "inspect_schema" }, execute);
     await service.finish(run.runId, "succeeded");
 
+    expect(logger.warn).toHaveBeenCalled();
     expect(execute).toHaveBeenCalledTimes(1);
     const restarted = new AgentRunStore({ world: createLocalWorld({ dataDir: dir, recoverActiveRuns: false }) });
     const view = await restarted.read(run.runId);
@@ -238,6 +239,7 @@ describe("AgentRunStore — transient Windows existence probes (#900)", () => {
       store.appendEvent(run.runId, { kind: "tool-invoked", stepId: "first", tool: "inspect_schema", atMs: 2 }),
       store.appendEvent(run.runId, { kind: "tool-invoked", stepId: "second", tool: "inspect_schema", atMs: 3 }),
     ]);
+    expect(logger.warn).toHaveBeenCalled();
     expect((await store.read(run.runId))?.unsettledStepIds).toEqual(["first", "second"]);
   });
 
@@ -275,6 +277,7 @@ describe("AgentRunStore — transient Windows existence probes (#900)", () => {
 
     await Promise.all([store.appendEvent(run.runId, event), store.close(run.runId)]);
 
+    expect(logger.warn).toHaveBeenCalled();
     expect((await store.read(run.runId))?.record.events).toEqual([event]);
   });
 });

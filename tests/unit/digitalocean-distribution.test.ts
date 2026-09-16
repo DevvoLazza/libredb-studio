@@ -124,8 +124,11 @@ describe("DigitalOcean manual release handoff (#910)", () => {
     const index = steps.findIndex(
       (step: { name: string }) => step.name === "DigitalOcean Marketplace release checklist",
     );
-    expect(index).toBeGreaterThan(steps.findIndex((step: { name: string }) => step.name === "Publish the release"));
-    expect(steps[index].if).toBeUndefined();
+    const publishIndex = steps.findIndex((step: { name: string }) => step.name === "Publish the release");
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(publishIndex).toBeGreaterThanOrEqual(0);
+    expect(index).toBeGreaterThan(publishIndex);
+    expect(steps[index].if).toBe("${{ !contains(needs.guard.outputs.version, '-') }}");
     expect(steps[index]["continue-on-error"]).toBe(true);
     expect(steps[index].env.VERSION).toBe("${{ needs.guard.outputs.version }}");
     expect(steps[index].run).not.toContain("${{");

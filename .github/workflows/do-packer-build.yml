@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Released semver tag for snapshot name AND image pin — must exist on ghcr.io/libredb/libredb-studio'
+        description: 'Released semver tag for snapshot name AND image pin - must exist on ghcr.io/libredb/libredb-studio'
         required: true
         type: string
 

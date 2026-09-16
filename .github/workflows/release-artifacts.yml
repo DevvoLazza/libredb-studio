@@ -1179,6 +1179,7 @@ jobs:
       # and a Vendor Portal submission. Keep it manual, with a handoff on every
       # release instead of a release:published trigger (GITHUB_TOKEN suppresses it).
       - name: DigitalOcean Marketplace release checklist
+        if: ${{ !contains(needs.guard.outputs.version, '-') }}
         continue-on-error: true
         env:
           VERSION: ${{ needs.guard.outputs.version }}

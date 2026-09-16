@@ -69,6 +69,24 @@ describe("ColumnList", () => {
     expect(queryByText("VARCHAR(255)")).toBeNull();
   });
 
+  test("keeps the full parameterized type available in the tooltip", () => {
+    const { getByText } = render(<ColumnList columns={columnsWithPrimary} indexes={[]} />);
+    expect(getByText("VARCHAR").getAttribute("title")).toBe("VARCHAR(255)");
+  });
+
+  test("keeps long types available in the tooltip alongside their column names", () => {
+    const columns: DetailedObject["columns"] = [
+      { name: "created_at", type: "timestamp without time zone", nullable: false, isPrimary: false },
+      { name: "updated_at", type: "timestamp(6) with time zone", nullable: true, isPrimary: false },
+    ];
+    const { getByText } = render(<ColumnList columns={columns} indexes={[]} />);
+
+    expect(getByText("created_at").nextElementSibling?.getAttribute("title")).toBe("timestamp without time zone");
+    expect(getByText("updated_at").nextElementSibling?.getAttribute("title")).toBe("timestamp(6) with time zone");
+    expect(getByText("timestamp without time zone")).not.toBeNull();
+    expect(getByText("timestamp")).not.toBeNull();
+  });
+
   // ── Primary key indicator ───────────────────────────────────────────────
 
   test("renders Key icon for primary key columns", () => {

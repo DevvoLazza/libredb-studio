@@ -1,7 +1,6 @@
 "use client";
 
-import { appFetch } from "@/lib/config/base-path";
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   GitCompare,
   Plus,
@@ -14,15 +13,14 @@ import {
   Clock,
   Database,
   TriangleAlert,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { SchemaSnapshot, DatabaseType, DatabaseConnection } from "@/lib/types";
-import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
-import { relationKindIds } from "@/lib/db/object-kinds";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { DetailedObject } from "@/lib/db/detailed-object";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
 import { useAllConnections } from "@/hooks/use-all-connections";
@@ -30,13 +28,16 @@ import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
 import type { SchemaDiff as SchemaDiffType, TableDiff } from "@/lib/schema-diff/types";
 import { SnapshotTimeline } from "@/components/SnapshotTimeline";
+import { useSchemaDiffCurrent } from "@/hooks/use-schema-diff-current";
+import { readSchemaForDiff } from "@/lib/schema-diff/read-schema";
 
 interface SchemaDiffProps {
+  /** Explorer updates trigger a fresh read; cached contents are never compared or saved. */
   schema: readonly DetailedObject[];
   connection: DatabaseConnection | null;
 }
 
-export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
+export function SchemaDiff({ schema: cachedSchema, connection }: SchemaDiffProps) {
   const [snapshots, setSnapshots] = useState<SchemaSnapshot[]>(() => storage.getSchemaSnapshots());
   const [sourceId, setSourceId] = useState<string>("current");
   const [targetId, setTargetId] = useState<string>("");
@@ -44,24 +45,63 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   const [showMigration, setShowMigration] = useState(false);
   const [snapshotLabel, setSnapshotLabel] = useState("");
   const [showLabelInput, setShowLabelInput] = useState(false);
+  const current = useSchemaDiffCurrent(connection, sourceId, targetId, cachedSchema);
+  const { refresh: refreshCurrent } = current;
+  const needsCurrent = sourceId === "current" || targetId === "current";
+  const [snapshotState, setSnapshotState] = useState<{
+    connection: DatabaseConnection;
+    controller: AbortController | null;
+    error: string | null;
+  } | null>(null);
+  const savingSnapshot =
+    snapshotState?.connection === connection && !!snapshotState?.controller && !snapshotState.controller.signal.aborted;
+  const snapshotError = snapshotState?.connection === connection ? snapshotState?.error : null;
+  const snapshotRead = useRef<{ connection: DatabaseConnection; controller: AbortController } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (snapshotRead.current?.connection === connection) {
+        snapshotRead.current.controller.abort();
+        snapshotRead.current = null;
+      }
+    };
+  }, [connection]);
 
   // Take snapshot of current schema
-  const takeSnapshot = useCallback(() => {
-    if (!connection) return;
-    const snapshot: SchemaSnapshot = {
-      id: Date.now().toString(),
-      connectionId: connection.id,
-      connectionName: connection.name,
-      databaseType: connection.type,
-      schema: JSON.parse(JSON.stringify(schema)),
-      createdAt: new Date(),
-      label: snapshotLabel.trim() || undefined,
-    };
-    storage.saveSchemaSnapshot(snapshot);
-    setSnapshots(storage.getSchemaSnapshots());
-    setSnapshotLabel("");
-    setShowLabelInput(false);
-  }, [schema, connection, snapshotLabel]);
+  const takeSnapshot = useCallback(async () => {
+    if (!connection || snapshotRead.current) return;
+    const controller = new AbortController();
+    snapshotRead.current = { connection, controller };
+    setSnapshotState({ connection, controller, error: null });
+    try {
+      const schema = await readSchemaForDiff(connection, controller.signal);
+      if (controller.signal.aborted) return;
+      const snapshot: SchemaSnapshot = {
+        id: Date.now().toString(),
+        connectionId: connection.id,
+        connectionName: connection.name,
+        databaseType: connection.type,
+        schema: JSON.parse(JSON.stringify(schema)),
+        createdAt: new Date(),
+        label: snapshotLabel.trim() || undefined,
+      };
+      storage.saveSchemaSnapshot(snapshot);
+      setSnapshots(storage.getSchemaSnapshots());
+      refreshCurrent();
+      setSnapshotLabel("");
+      setShowLabelInput(false);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const message = error instanceof Error ? error.message : "Could not read the schema for a snapshot";
+      setSnapshotState({ connection, controller, error: message });
+      logger.warn("Failed to read the schema for a snapshot", { route: "SchemaDiff", error: message });
+    } finally {
+      if (snapshotRead.current?.controller === controller) {
+        snapshotRead.current = null;
+        setSnapshotState((state) => (state?.controller === controller ? { ...state, controller: null } : state));
+      }
+    }
+  }, [connection, snapshotLabel, refreshCurrent]);
 
   // Delete snapshot
   const deleteSnapshot = useCallback(
@@ -77,15 +117,19 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
   // Compute diff
   const diff = useMemo<SchemaDiffType | null>(() => {
     if (!targetId) return null;
+    if (needsCurrent && !current.schema) return null;
 
-    const sourceSchema = sourceId === "current" ? schema : snapshots.find((s) => s.id === sourceId)?.schema || [];
+    const sourceSchema =
+      sourceId === "current" ? current.schema! : snapshots.find((s) => s.id === sourceId)?.schema || [];
 
-    const targetSchema = targetId === "current" ? schema : snapshots.find((s) => s.id === targetId)?.schema || [];
+    const targetSchema =
+      targetId === "current" ? current.schema! : snapshots.find((s) => s.id === targetId)?.schema || [];
 
     if (sourceId === targetId) return null;
 
     return diffSchemas(sourceSchema, targetSchema);
-  }, [sourceId, targetId, schema, snapshots]);
+  }, [sourceId, targetId, current.schema, needsCurrent, snapshots]);
+  const selectedDiff = diff?.tables.find((table) => table.tableName === selectedTable);
 
   // Generate migration SQL
   const migrationSQL = useMemo(() => {
@@ -106,36 +150,9 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
       setFetchingRemote(true);
       try {
-        /*
-          Two reads of the object surface, where this used to be one call to
-          `POST /api/db/schema-snapshot` (#789). That route read the flat schema, which no longer
-          exists, and the two things it hand-rolled around that read are things
-          `getOrCreateProvider` does for every object route already: it opens the SSH tunnel
-          (#457), and it returns the handle this connection already holds rather than opening a
-          second one, which is what #498 needed on an engine that admits only one writer to its
-          file. So the route is deleted rather than ported.
-
-          `provider-meta` decides which kinds are asked for, exactly as the object browser's own
-          read does, and for the same measured reason: a diff is over relations, and asking for
-          every declared kind would list routines and triggers this comparison cannot use.
-        */
-        const payload = conn.managed && conn.seedId ? { connectionId: `seed:${conn.seedId}` } : { connection: conn };
-        const post = (path: string, body: unknown) =>
-          appFetch(path, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-
-        const metaRes = await post("/api/db/provider-meta", payload);
-        const meta = await metaRes.json();
-        if (!metaRes.ok) throw new Error(meta.error);
-        const kinds = relationKindIds(meta.capabilities as ProviderCapabilities);
-        if (kinds.length === 0) throw new Error(`${conn.name} declares no object kinds a schema diff can compare`);
-
-        const res = await post("/api/db/objects/inventory", { ...payload, kinds, includeColumns: true });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
+        // Use the same live object routes as Current Schema, including managed
+        // seed resolution and the provider's declared relation kinds.
+        const schema = await readSchemaForDiff(conn);
 
         // Auto-save as snapshot
         const snapshot: SchemaSnapshot = {
@@ -143,7 +160,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           connectionId: conn.id,
           connectionName: conn.name,
           databaseType: conn.type,
-          schema: [...detailedObjects(data.objects ?? [], data.details ?? [])],
+          schema: [...schema],
           createdAt: new Date(),
           label: `Live: ${conn.name}`,
         };
@@ -194,6 +211,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
     const date = new Date(s.createdAt).toLocaleString();
     return `${s.label || s.connectionName} (${date})`;
   };
+  const readError = snapshotError || (targetId && sourceId !== targetId && needsCurrent ? current.error : null);
 
   return (
     <div className="h-full flex flex-col bg-sunken">
@@ -283,6 +301,26 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
           {fetchingRemote && <span className="text-xs text-fg-muted animate-pulse">Fetching...</span>}
         </div>
 
+        {needsCurrent && connection && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-fg-muted gap-1"
+              aria-label="Refresh current schema"
+              onClick={current.refresh}
+              disabled={current.loading}
+            >
+              <RefreshCw className={cn("w-3 h-3", current.loading && "animate-spin")} /> Refresh
+            </Button>
+            {current.readAt && (
+              <span className="text-xs text-fg-subtle">
+                Last read: <time dateTime={current.readAt.toISOString()}>{current.readAt.toLocaleTimeString()}</time>
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="flex-1" />
 
         {/* Snapshot controls */}
@@ -292,19 +330,31 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
               type="text"
               placeholder="Label (optional)..."
               value={snapshotLabel}
+              disabled={savingSnapshot}
               onChange={(e) => setSnapshotLabel(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && takeSnapshot()}
               className="h-7 px-2 text-xs bg-fill border border-hairline-strong rounded text-fg-secondary focus:outline-none focus:border-brand-tint w-32"
               autoFocus
             />
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-brand" onClick={takeSnapshot}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-brand"
+              onClick={takeSnapshot}
+              disabled={savingSnapshot || !connection}
+            >
               {"Save"}
             </Button>
             <Button
               variant="ghost"
               size="sm"
               className="h-7 text-xs text-fg-muted"
-              onClick={() => setShowLabelInput(false)}
+              onClick={() => {
+                setShowLabelInput(false);
+                setSnapshotState(null);
+                refreshCurrent();
+              }}
+              disabled={savingSnapshot}
             >
               {"Cancel"}
             </Button>
@@ -320,6 +370,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
             <Camera className="w-3 h-3" /> Snapshot
           </Button>
         )}
+        {savingSnapshot && <output className="text-xs text-fg-muted">Reading schema for snapshot...</output>}
 
         {diff?.hasChanges && (
           <Button
@@ -335,7 +386,15 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden flex">
-        {!targetId ? (
+        {readError ? (
+          <div role="alert" className="flex-1 flex items-center justify-center text-danger gap-2 p-4 text-xs">
+            <TriangleAlert className="w-3.5 h-3.5 shrink-0" /> {readError}
+          </div>
+        ) : targetId && sourceId !== targetId && needsCurrent && current.loading ? (
+          <output className="flex-1 flex items-center justify-center text-fg-muted text-xs">
+            Reading current schema...
+          </output>
+        ) : !targetId ? (
           <div className="flex-1 flex flex-col items-center justify-center text-fg-subtle gap-3">
             <GitCompare strokeWidth={1.5} className="w-10 h-10 opacity-30" />
             <p className="text-xs">Select source and target to compare schemas</p>
@@ -392,8 +451,8 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
 
             {/* Table Detail */}
             <div className="flex-1 overflow-auto p-4">
-              {selectedTable ? (
-                <TableDiffDetail diff={diff.tables.find((t) => t.tableName === selectedTable)!} />
+              {selectedDiff ? (
+                <TableDiffDetail diff={selectedDiff} />
               ) : (
                 <div className="h-full flex items-center justify-center text-fg-subtle text-xs">
                   {"Select a table to view diff details"}

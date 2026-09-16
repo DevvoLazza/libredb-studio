@@ -205,6 +205,23 @@ import { logger } from "@/lib/logger";
 import { mockSchema } from "../fixtures/schemas";
 import { mockPostgresConnection } from "../fixtures/connections";
 
+const originalFetch = globalThis.fetch;
+const localSchemaFetch = mock(async (url: string) =>
+  Response.json(
+    url.includes("provider-meta")
+      ? { capabilities: { objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }] } }
+      : {
+          objects: mockSchema.map(({ name, kind, path }) => ({ name, kind, path })),
+          details: mockSchema.map(({ path, columns, indexes, foreignKeys }) => ({
+            path,
+            columns,
+            indexes,
+            foreignKeys,
+          })),
+        },
+  ),
+);
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function renderDiff(overrides: Partial<Parameters<typeof SchemaDiff>[0]> = {}) {
@@ -212,15 +229,21 @@ function renderDiff(overrides: Partial<Parameters<typeof SchemaDiff>[0]> = {}) {
 }
 
 /** Trigger the source Select's onValueChange (source value starts as "current") */
-function changeSource(value: string) {
+async function changeSource(value: string) {
   const fn = selectCallbacks.get("current");
-  if (fn) act(() => fn(value));
+  if (fn)
+    await act(async () => {
+      fn(value);
+    });
 }
 
 /** Trigger the target Select's onValueChange (target value starts as "") */
-function changeTarget(value: string) {
+async function changeTarget(value: string) {
   const fn = selectCallbacks.get("__empty__") || selectCallbacks.get("");
-  if (fn) act(() => fn(value));
+  if (fn)
+    await act(async () => {
+      fn(value);
+    });
 }
 
 /** Get the target callback for async tests (no act() wrapping) */
@@ -244,6 +267,8 @@ function changeInput(input: HTMLInputElement, value: string) {
 
 describe("SchemaDiff", () => {
   beforeEach(() => {
+    globalThis.fetch = localSchemaFetch as unknown as typeof fetch;
+    localSchemaFetch.mockClear();
     mockDiffSchemas.mockClear();
     mockGenerateMigrationSQL.mockClear();
     mockGetSchemaSnapshots.mockClear();
@@ -283,6 +308,7 @@ describe("SchemaDiff", () => {
 
   afterEach(() => {
     cleanup();
+    globalThis.fetch = originalFetch;
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -376,13 +402,15 @@ describe("SchemaDiff", () => {
       expect(queryByPlaceholderText("Label (optional)...")).toBeNull();
     });
 
-    test("Save button calls storage.saveSchemaSnapshot", () => {
+    test("Save button calls storage.saveSchemaSnapshot", async () => {
       const { getByText, getByPlaceholderText, queryByPlaceholderText } = renderDiff();
       fireEvent.click(getByText("Snapshot"));
 
       const input = getByPlaceholderText("Label (optional)...") as HTMLInputElement;
       changeInput(input, "My label");
-      fireEvent.click(getByText("Save"));
+      await act(async () => {
+        fireEvent.click(getByText("Save"));
+      });
 
       expect(mockSaveSchemaSnapshot).toHaveBeenCalledTimes(1);
       const saved = (mockSaveSchemaSnapshot.mock.calls as unknown[][])[0][0] as Record<string, unknown>;
@@ -394,10 +422,12 @@ describe("SchemaDiff", () => {
       expect(queryByPlaceholderText("Label (optional)...")).toBeNull();
     });
 
-    test("Save with empty label sets label to undefined", () => {
+    test("Save with empty label sets label to undefined", async () => {
       const { getByText } = renderDiff();
       fireEvent.click(getByText("Snapshot"));
-      fireEvent.click(getByText("Save"));
+      await act(async () => {
+        fireEvent.click(getByText("Save"));
+      });
 
       expect(mockSaveSchemaSnapshot).toHaveBeenCalledTimes(1);
       expect(
@@ -405,13 +435,15 @@ describe("SchemaDiff", () => {
       ).toBeUndefined();
     });
 
-    test("Enter key in label input triggers snapshot save", () => {
+    test("Enter key in label input triggers snapshot save", async () => {
       const { getByText, getByPlaceholderText } = renderDiff();
       fireEvent.click(getByText("Snapshot"));
 
       const input = getByPlaceholderText("Label (optional)...") as HTMLInputElement;
       changeInput(input, "Enter label");
-      fireEvent.keyDown(input, { key: "Enter" });
+      await act(async () => {
+        fireEvent.keyDown(input, { key: "Enter" });
+      });
 
       expect(mockSaveSchemaSnapshot).toHaveBeenCalledTimes(1);
     });
@@ -422,11 +454,13 @@ describe("SchemaDiff", () => {
       expect(mockSaveSchemaSnapshot).not.toHaveBeenCalled();
     });
 
-    test("snapshot save refreshes snapshot list", () => {
+    test("snapshot save refreshes snapshot list", async () => {
       const { getByText } = renderDiff();
       const callsBefore = mockGetSchemaSnapshots.mock.calls.length;
       fireEvent.click(getByText("Snapshot"));
-      fireEvent.click(getByText("Save"));
+      await act(async () => {
+        fireEvent.click(getByText("Save"));
+      });
       expect(mockGetSchemaSnapshots.mock.calls.length).toBeGreaterThan(callsBefore);
     });
   });
@@ -436,24 +470,24 @@ describe("SchemaDiff", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("source/target selection", () => {
-    test("selecting a target triggers diff display", () => {
+    test("selecting a target triggers diff display", async () => {
       const { queryByText } = renderDiff();
-      changeTarget("snap-1");
+      await changeTarget("snap-1");
       // diff has changes → summary should appear
       expect(queryByText(/1 added, 1 removed, 1 modified/)).toBeTruthy();
     });
 
-    test("selecting same source and target shows same-schema message", () => {
+    test("selecting same source and target shows same-schema message", async () => {
       const { getByText } = renderDiff();
-      changeTarget("current");
+      await changeTarget("current");
       // source=current, target=current → same → null diff
       expect(getByText("Cannot compare same schema with itself")).toBeTruthy();
     });
 
-    test("changing source updates diff", () => {
+    test("changing source updates diff", async () => {
       renderDiff();
-      changeSource("snap-1");
-      changeTarget("current");
+      await changeSource("snap-1");
+      await changeTarget("current");
       expect(mockDiffSchemas).toHaveBeenCalled();
     });
   });
@@ -463,38 +497,38 @@ describe("SchemaDiff", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("diff view with changes", () => {
-    function renderWithDiff() {
+    async function renderWithDiff() {
       const result = renderDiff();
-      changeTarget("snap-1");
+      await changeTarget("snap-1");
       return result;
     }
 
-    test("shows summary counts", () => {
-      const { getByText } = renderWithDiff();
+    test("shows summary counts", async () => {
+      const { getByText } = await renderWithDiff();
       expect(getByText(/1 added, 1 removed, 1 modified/)).toBeTruthy();
     });
 
-    test("renders all table names in sidebar", () => {
-      const { getByText } = renderWithDiff();
+    test("renders all table names in sidebar", async () => {
+      const { getByText } = await renderWithDiff();
       expect(getByText("new_table")).toBeTruthy();
       expect(getByText("old_table")).toBeTruthy();
       expect(getByText("users")).toBeTruthy();
     });
 
-    test("renders action badges for tables", () => {
-      const { getByText } = renderWithDiff();
+    test("renders action badges for tables", async () => {
+      const { getByText } = await renderWithDiff();
       expect(getByText("Added")).toBeTruthy();
       expect(getByText("Removed")).toBeTruthy();
       expect(getByText("Modified")).toBeTruthy();
     });
 
-    test('shows "Select a table" prompt when no table is selected', () => {
-      const { getByText } = renderWithDiff();
+    test('shows "Select a table" prompt when no table is selected', async () => {
+      const { getByText } = await renderWithDiff();
       expect(getByText("Select a table to view diff details")).toBeTruthy();
     });
 
-    test("clicking a table shows its detail", () => {
-      const { getByText } = renderWithDiff();
+    test("clicking a table shows its detail", async () => {
+      const { getByText } = await renderWithDiff();
       fireEvent.click(getByText("new_table"));
       // TableDiffDetail renders: table heading with action badge
       const badges = document.querySelectorAll('[data-testid="badge"]');
@@ -502,8 +536,8 @@ describe("SchemaDiff", () => {
       expect(addedBadge).toBeTruthy();
     });
 
-    test("clicking a different table switches detail", () => {
-      const { getByText } = renderWithDiff();
+    test("clicking a different table switches detail", async () => {
+      const { getByText } = await renderWithDiff();
       fireEvent.click(getByText("new_table"));
       // new_table detail should show column "id"
       expect(getByText("id")).toBeTruthy();
@@ -513,8 +547,8 @@ describe("SchemaDiff", () => {
       expect(getByText("name")).toBeTruthy();
     });
 
-    test("selected table has ChevronDown, others have ChevronRight", () => {
-      const { container, getByText } = renderWithDiff();
+    test("selected table has ChevronDown, others have ChevronRight", async () => {
+      const { container, getByText } = await renderWithDiff();
       fireEvent.click(getByText("new_table"));
 
       const tableButtons = Array.from(container.querySelectorAll("button"));
@@ -525,8 +559,8 @@ describe("SchemaDiff", () => {
       expect(oldTableBtn?.querySelector(".lucide-chevron-right")).toBeTruthy();
     });
 
-    test("selected table has highlighted background", () => {
-      const { container, getByText } = renderWithDiff();
+    test("selected table has highlighted background", async () => {
+      const { container, getByText } = await renderWithDiff();
       fireEvent.click(getByText("users"));
 
       const usersBtn = Array.from(container.querySelectorAll("button")).find((b) => b.textContent?.includes("users"));
@@ -539,17 +573,17 @@ describe("SchemaDiff", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("no changes state", () => {
-    test('shows "No differences found" message', () => {
+    test('shows "No differences found" message', async () => {
       mockDiffSchemas.mockImplementation(() => structuredClone(mockDiffNoChanges));
       const { getByText } = renderDiff();
-      changeTarget("snap-1");
+      await changeTarget("snap-1");
       expect(getByText("No differences found between source and target")).toBeTruthy();
     });
 
-    test("SQL Migration button does not appear when no changes", () => {
+    test("SQL Migration button does not appear when no changes", async () => {
       mockDiffSchemas.mockImplementation(() => structuredClone(mockDiffNoChanges));
       const { queryByText } = renderDiff();
-      changeTarget("snap-1");
+      await changeTarget("snap-1");
       expect(queryByText("SQL Migration")).toBeNull();
     });
   });
@@ -559,19 +593,19 @@ describe("SchemaDiff", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("migration SQL", () => {
-    function renderWithDiff() {
+    async function renderWithDiff() {
       const result = renderDiff();
-      changeTarget("snap-1");
+      await changeTarget("snap-1");
       return result;
     }
 
-    test("SQL Migration button appears when diff has changes", () => {
-      const { getByText } = renderWithDiff();
+    test("SQL Migration button appears when diff has changes", async () => {
+      const { getByText } = await renderWithDiff();
       expect(getByText("SQL Migration")).toBeTruthy();
     });
 
-    test("clicking SQL Migration shows SQL and changes button text", () => {
-      const { getByText, container } = renderWithDiff();
+    test("clicking SQL Migration shows SQL and changes button text", async () => {
+      const { getByText, container } = await renderWithDiff();
       fireEvent.click(getByText("SQL Migration"));
 
       expect(container.textContent).toContain("CREATE TABLE new_table");
@@ -579,8 +613,8 @@ describe("SchemaDiff", () => {
       expect(getByText("Diff View")).toBeTruthy();
     });
 
-    test("toggling back to diff view shows table list again", () => {
-      const { getByText } = renderWithDiff();
+    test("toggling back to diff view shows table list again", async () => {
+      const { getByText } = await renderWithDiff();
       fireEvent.click(getByText("SQL Migration"));
       expect(getByText("Diff View")).toBeTruthy();
 
@@ -589,29 +623,28 @@ describe("SchemaDiff", () => {
       expect(getByText("new_table")).toBeTruthy();
     });
 
-    test("migration SQL is rendered in a pre tag", () => {
-      const { getByText, container } = renderWithDiff();
+    test("migration SQL is rendered in a pre tag", async () => {
+      const { getByText, container } = await renderWithDiff();
       fireEvent.click(getByText("SQL Migration"));
       const pre = container.querySelector("pre");
       expect(pre).toBeTruthy();
       expect(pre!.textContent).toContain("CREATE TABLE");
     });
 
-    test("generateMigrationSQL receives correct dialect", () => {
-      renderWithDiff();
+    test("generateMigrationSQL receives correct dialect", async () => {
+      await renderWithDiff();
       if (mockGenerateMigrationSQL.mock.calls.length > 0) {
         const dialect = (mockGenerateMigrationSQL.mock.calls as unknown[][])[0][1];
         expect(dialect).toBe("postgres");
       }
     });
 
-    test("defaults to postgres dialect when connection is null", () => {
+    test("defaults to postgres dialect when connection is null", async () => {
+      mockGetSchemaSnapshots.mockImplementation(() => [...mockSnapshots, { ...mockSnapshots[0], id: "snap-2" }]);
       renderDiff({ connection: null });
-      changeTarget("snap-1");
-      if (mockGenerateMigrationSQL.mock.calls.length > 0) {
-        const dialect = (mockGenerateMigrationSQL.mock.calls as unknown[][])[0][1];
-        expect(dialect).toBe("postgres");
-      }
+      await changeSource("snap-1");
+      await changeTarget("snap-2");
+      expect((mockGenerateMigrationSQL.mock.calls as unknown[][]).at(-1)?.[1]).toBe("postgres");
     });
   });
 
@@ -620,31 +653,31 @@ describe("SchemaDiff", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("TableDiffDetail", () => {
-    function renderAndSelectTable(tableName: string) {
+    async function renderAndSelectTable(tableName: string) {
       const result = renderDiff();
-      changeTarget("snap-1");
+      await changeTarget("snap-1");
       fireEvent.click(result.getByText(tableName));
       return result;
     }
 
     // ── Header ──
 
-    test("shows table name and action badge", () => {
-      const { container } = renderAndSelectTable("new_table");
+    test("shows table name and action badge", async () => {
+      const { container } = await renderAndSelectTable("new_table");
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const addedBadge = Array.from(badges).find((b) => b.textContent === "added");
       expect(addedBadge).toBeTruthy();
     });
 
-    test("removed table shows removed badge", () => {
-      const { container } = renderAndSelectTable("old_table");
+    test("removed table shows removed badge", async () => {
+      const { container } = await renderAndSelectTable("old_table");
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const removedBadge = Array.from(badges).find((b) => b.textContent === "removed");
       expect(removedBadge).toBeTruthy();
     });
 
-    test("modified table shows modified badge", () => {
-      const { container } = renderAndSelectTable("users");
+    test("modified table shows modified badge", async () => {
+      const { container } = await renderAndSelectTable("users");
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const modifiedBadge = Array.from(badges).find((b) => b.textContent === "modified");
       expect(modifiedBadge).toBeTruthy();
@@ -652,56 +685,56 @@ describe("SchemaDiff", () => {
 
     // ── Columns ──
 
-    test('renders "Columns" heading when columns exist', () => {
-      const { getByText } = renderAndSelectTable("users");
+    test('renders "Columns" heading when columns exist', async () => {
+      const { getByText } = await renderAndSelectTable("users");
       expect(getByText("Columns")).toBeTruthy();
     });
 
-    test("renders added column with target type", () => {
-      const { getByText } = renderAndSelectTable("new_table");
+    test("renders added column with target type", async () => {
+      const { getByText } = await renderAndSelectTable("new_table");
       expect(getByText("id")).toBeTruthy();
       expect(getByText("integer")).toBeTruthy();
     });
 
-    test("renders removed column with source type", () => {
-      const { getByText } = renderAndSelectTable("old_table");
+    test("renders removed column with source type", async () => {
+      const { getByText } = await renderAndSelectTable("old_table");
       expect(getByText("name")).toBeTruthy();
       expect(getByText("varchar")).toBeTruthy();
     });
 
-    test("renders modified column with change details", () => {
-      const { getByText } = renderAndSelectTable("users");
+    test("renders modified column with change details", async () => {
+      const { getByText } = await renderAndSelectTable("users");
       expect(getByText("email")).toBeTruthy();
       expect(getByText("Type changed: varchar(100) -> varchar(255)")).toBeTruthy();
     });
 
-    test("added column row has the green hue tint background", () => {
-      const { getByText } = renderAndSelectTable("new_table");
+    test("added column row has the green hue tint background", async () => {
+      const { getByText } = await renderAndSelectTable("new_table");
       const colRow = getByText("id").closest('div[class*="rounded"]');
       expect(colRow?.className).toContain("bg-hue-green-tint/5");
     });
 
-    test("removed column row has the red hue tint background", () => {
-      const { getByText } = renderAndSelectTable("old_table");
+    test("removed column row has the red hue tint background", async () => {
+      const { getByText } = await renderAndSelectTable("old_table");
       const colRow = getByText("name").closest('div[class*="rounded"]');
       expect(colRow?.className).toContain("bg-hue-red-tint/5");
     });
 
-    test("modified column row has the yellow hue tint background", () => {
-      const { getByText } = renderAndSelectTable("users");
+    test("modified column row has the yellow hue tint background", async () => {
+      const { getByText } = await renderAndSelectTable("users");
       const colRow = getByText("email").closest('div[class*="rounded"]');
       expect(colRow?.className).toContain("bg-hue-yellow-tint/5");
     });
 
     // ── Indexes ──
 
-    test('renders "Indexes" heading when indexes exist', () => {
-      const { getByText } = renderAndSelectTable("users");
+    test('renders "Indexes" heading when indexes exist', async () => {
+      const { getByText } = await renderAndSelectTable("users");
       expect(getByText("Indexes")).toBeTruthy();
     });
 
-    test("renders index names and changes", () => {
-      const { getByText } = renderAndSelectTable("users");
+    test("renders index names and changes", async () => {
+      const { getByText } = await renderAndSelectTable("users");
       expect(getByText("idx_email")).toBeTruthy();
       expect(getByText("idx_old")).toBeTruthy();
       expect(getByText("idx_name")).toBeTruthy();
@@ -710,8 +743,8 @@ describe("SchemaDiff", () => {
       expect(getByText("Columns changed")).toBeTruthy();
     });
 
-    test("index rows have correct backgrounds", () => {
-      const { getByText } = renderAndSelectTable("users");
+    test("index rows have correct backgrounds", async () => {
+      const { getByText } = await renderAndSelectTable("users");
       const addedIdx = getByText("idx_email").closest('div[class*="rounded"]');
       expect(addedIdx?.className).toContain("bg-hue-green-tint/5");
       const removedIdx = getByText("idx_old").closest('div[class*="rounded"]');
@@ -720,36 +753,36 @@ describe("SchemaDiff", () => {
       expect(modifiedIdx?.className).toContain("bg-hue-yellow-tint/5");
     });
 
-    test('does not render "Indexes" heading when no indexes', () => {
-      const { queryByText } = renderAndSelectTable("new_table");
+    test('does not render "Indexes" heading when no indexes', async () => {
+      const { queryByText } = await renderAndSelectTable("new_table");
       expect(queryByText("Indexes")).toBeNull();
     });
 
     // ── Foreign Keys ──
 
-    test('renders "Foreign Keys" heading when FKs exist', () => {
-      const { getByText } = renderAndSelectTable("users");
+    test('renders "Foreign Keys" heading when FKs exist', async () => {
+      const { getByText } = await renderAndSelectTable("users");
       expect(getByText("Foreign Keys")).toBeTruthy();
     });
 
-    test("renders FK column names and changes", () => {
-      const { getByText } = renderAndSelectTable("users");
+    test("renders FK column names and changes", async () => {
+      const { getByText } = await renderAndSelectTable("users");
       expect(getByText("org_id")).toBeTruthy();
       expect(getByText("dept_id")).toBeTruthy();
       expect(getByText("Added FK on org_id")).toBeTruthy();
       expect(getByText("Removed FK on dept_id")).toBeTruthy();
     });
 
-    test("FK rows have correct backgrounds", () => {
-      const { getByText } = renderAndSelectTable("users");
+    test("FK rows have correct backgrounds", async () => {
+      const { getByText } = await renderAndSelectTable("users");
       const addedFK = getByText("org_id").closest('div[class*="rounded"]');
       expect(addedFK?.className).toContain("bg-hue-green-tint/5");
       const removedFK = getByText("dept_id").closest('div[class*="rounded"]');
       expect(removedFK?.className).toContain("bg-hue-red-tint/5");
     });
 
-    test('does not render "Foreign Keys" heading when no FKs', () => {
-      const { queryByText } = renderAndSelectTable("new_table");
+    test('does not render "Foreign Keys" heading when no FKs', async () => {
+      const { queryByText } = await renderAndSelectTable("new_table");
       expect(queryByText("Foreign Keys")).toBeNull();
     });
 
@@ -758,7 +791,7 @@ describe("SchemaDiff", () => {
     // it reports the old one removed and the new one added. Keying the rows by the
     // column name alone gave React two children with the same key — one row, and the
     // half of the change the user needed to see missing.
-    test("renders both halves of a foreign key that was repointed", () => {
+    test("renders both halves of a foreign key that was repointed", async () => {
       mockDiffSchemas.mockImplementation(() =>
         structuredClone({
           tables: [
@@ -784,7 +817,7 @@ describe("SchemaDiff", () => {
       };
       try {
         const { getByText, getAllByText } = renderDiff();
-        changeTarget("snap-1");
+        await changeTarget("snap-1");
         fireEvent.click(getByText("users"));
 
         expect(getAllByText("org_id")).toHaveLength(2);
@@ -796,7 +829,7 @@ describe("SchemaDiff", () => {
       expect(complaints.filter((line) => line.includes("same key"))).toEqual([]);
     });
 
-    test("renders no action icon for unknown column action", () => {
+    test("renders no action icon for unknown column action", async () => {
       mockDiffSchemas.mockImplementation(() =>
         structuredClone({
           tables: [
@@ -821,7 +854,7 @@ describe("SchemaDiff", () => {
         }),
       );
       const { getByText } = renderDiff();
-      changeTarget("snap-1");
+      await changeTarget("snap-1");
       fireEvent.click(getByText("users"));
 
       const colRow = getByText("created_at").closest('div[class*="rounded"]');
@@ -835,11 +868,11 @@ describe("SchemaDiff", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("SnapshotTimeline integration", () => {
-    test("onCompare callback sets source and target", () => {
+    test("onCompare callback sets source and target", async () => {
       renderDiff();
       expect(capturedTimelineProps.onCompare).toBeDefined();
 
-      act(() => {
+      await act(async () => {
         capturedTimelineProps.onCompare!("snap-1", "current");
       });
 
@@ -931,8 +964,10 @@ describe("SchemaDiff", () => {
           fn!("conn:remote-1");
         });
 
-        expect(mockFetch).toHaveBeenCalledTimes(2);
-        const calls = mockFetch.mock.calls as unknown[][];
+        const calls = (mockFetch.mock.calls as unknown[][]).filter(
+          ([, options]) => JSON.parse((options as RequestInit).body as string).connection?.id === "remote-1",
+        );
+        expect(calls).toHaveLength(2);
         expect(calls[0][0]).toBe("/api/db/provider-meta");
         const [url, options] = calls[1] as [string, RequestInit];
         expect(url).toBe("/api/db/objects/inventory");
@@ -1052,30 +1087,30 @@ describe("SchemaDiff", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("action badges", () => {
-    function renderWithDiff() {
+    async function renderWithDiff() {
       const result = renderDiff();
-      changeTarget("snap-1");
+      await changeTarget("snap-1");
       return result;
     }
 
-    test("added badge has the green hue tint styling", () => {
-      const { container } = renderWithDiff();
+    test("added badge has the green hue tint styling", async () => {
+      const { container } = await renderWithDiff();
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const addedBadge = Array.from(badges).find((b) => b.textContent?.includes("Added"));
       expect(addedBadge).toBeTruthy();
       expect(addedBadge!.className).toContain("bg-hue-green-tint/20");
     });
 
-    test("removed badge has the red hue tint styling", () => {
-      const { container } = renderWithDiff();
+    test("removed badge has the red hue tint styling", async () => {
+      const { container } = await renderWithDiff();
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const removedBadge = Array.from(badges).find((b) => b.textContent?.includes("Removed"));
       expect(removedBadge).toBeTruthy();
       expect(removedBadge!.className).toContain("bg-hue-red-tint/20");
     });
 
-    test("modified badge has the yellow hue tint styling", () => {
-      const { container } = renderWithDiff();
+    test("modified badge has the yellow hue tint styling", async () => {
+      const { container } = await renderWithDiff();
       const badges = container.querySelectorAll('[data-testid="badge"]');
       const modifiedBadge = Array.from(badges).find((b) => b.textContent?.includes("Modified"));
       expect(modifiedBadge).toBeTruthy();

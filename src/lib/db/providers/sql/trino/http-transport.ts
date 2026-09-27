@@ -43,6 +43,7 @@
  */
 
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectForeignLink, rejectRedirect } from "@/lib/db/http/endpoint";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 // A `bigint` column arrives as an UNQUOTED JSON number and this protocol has no
@@ -953,6 +954,7 @@ export class TrinoHttpTransport implements TrinoTransport {
         response = await httpTransportFetch(url, { ...init, redirect: "manual", ...(signal ? { signal } : {}) });
         text = await response.text();
       } catch (error) {
+        if (error instanceof DatabaseConfigError) throw error;
         // A refused socket, an unresolvable host, an abort and a body that stopped
         // arriving all land here, and all have to leave as the seam's error type.
         throw requestFailure(this.dialect, error, signal);

@@ -18,6 +18,7 @@ type Reply = {
 
 let reply: Reply = { body: Buffer.from("ok"), headers: { "content-type": "text/plain" } };
 const requests: Array<{ options: RequestOptions; body: unknown; client: ClientRequest; protocol: string }> = [];
+const lookups: Array<{ hostname: string; all: unknown }> = [];
 let lastIncoming: IncomingMessage | undefined;
 
 function fakeRequest(protocol: string) {
@@ -45,7 +46,12 @@ function fakeRequest(protocol: string) {
 
 mock.module("node:dns", () => ({
   ...realDns,
-  lookup(hostname: string, _options: unknown, callback: (error: Error | null, addresses: LookupAddress[]) => void) {
+  lookup(
+    hostname: string,
+    options: { all?: boolean },
+    callback: (error: Error | null, addresses: LookupAddress[]) => void,
+  ) {
+    lookups.push({ hostname, all: options.all });
     if (hostname === "missing.example") callback(new Error("DNS failure"), []);
     else callback(null, [{ address: "8.8.8.8", family: 4 }]);
   },
@@ -61,6 +67,7 @@ afterEach(() => {
   if (original === undefined) delete process.env[flag];
   else process.env[flag] = original;
   requests.length = 0;
+  lookups.length = 0;
   lastIncoming = undefined;
   reply = { body: Buffer.from("ok"), headers: { "content-type": "text/plain" } };
 });
@@ -70,6 +77,29 @@ test("returns DNS errors to the socket lookup callback", async () => {
     publicAddressLookup("missing.example", { all: true }, (failure) => resolve(failure));
   });
   expect(error?.message).toBe("DNS failure");
+});
+
+test("validates every DNS answer before returning either lookup callback shape", async () => {
+  const all = await new Promise<LookupAddress[]>((resolve, reject) => {
+    publicAddressLookup("public.example", { all: true }, (error, addresses) => {
+      if (error) reject(error);
+      else if (Array.isArray(addresses)) resolve(addresses);
+      else reject(new Error("Expected all DNS answers"));
+    });
+  });
+  const one = await new Promise<{ address: string; family: number }>((resolve, reject) => {
+    publicAddressLookup("public.example", { all: false }, (error, address, family) => {
+      if (error) reject(error);
+      else if (typeof address === "string" && family !== undefined) resolve({ address, family });
+      else reject(new Error("Expected one DNS answer"));
+    });
+  });
+  expect(all).toEqual([{ address: "8.8.8.8", family: 4 }]);
+  expect(one).toEqual({ address: "8.8.8.8", family: 4 });
+  expect(lookups).toEqual([
+    { hostname: "public.example", all: true },
+    { hostname: "public.example", all: true },
+  ]);
 });
 
 test.each([
@@ -101,6 +131,21 @@ test("preserves an empty response for HEAD", async () => {
   const response = await httpTransportFetch("http://8.8.8.8/query", { method: "HEAD" });
   expect(response.body).toBeNull();
   expect(requests[0].protocol).toBe("http:");
+});
+
+test("passes headers and an abort signal to the socket and returns a non-200 status", async () => {
+  process.env[flag] = "true";
+  reply = { body: Buffer.from("unavailable"), headers: { "retry-after": "5" }, statusCode: 503 };
+  const controller = new AbortController();
+  const response = await httpTransportFetch("http://8.8.8.8/query", {
+    headers: { authorization: "Basic test" },
+    signal: controller.signal,
+  });
+  expect(requests[0].options.headers).toEqual({ authorization: "Basic test" });
+  expect(requests[0].options.signal).toBe(controller.signal);
+  expect(response.status).toBe(503);
+  expect(response.headers.get("retry-after")).toBe("5");
+  expect(await response.text()).toBe("unavailable");
 });
 
 test("destroys the incoming stream when its headers are invalid", async () => {

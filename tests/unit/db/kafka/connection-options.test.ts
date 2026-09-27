@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { KafkaError } from "@/lib/db/providers/stream/kafka/client";
@@ -6,6 +6,12 @@ import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connecti
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
+const httpFlag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
+const originalHttpFlag = process.env[httpFlag];
+afterEach(() => {
+  if (originalHttpFlag === undefined) delete process.env[httpFlag];
+  else process.env[httpFlag] = originalHttpFlag;
+});
 
 const base = {
   id: "k",
@@ -33,6 +39,11 @@ describe("kafkaConnectionOptions", () => {
 
   test("an IPv6 literal is passed without brackets, because the client takes a host and a port", () => {
     expect(kafkaConnectionOptions({ ...base, host: "::1" }, 1).broker.host).toBe("::1");
+  });
+
+  test.each(["true", "invalid"])("the HTTP address flag %s does not govern Kafka brokers", (value) => {
+    process.env[httpFlag] = value;
+    expect(kafkaConnectionOptions({ ...base, host: "10.0.0.5" }, 1).broker.host).toBe("10.0.0.5");
   });
 
   test("K1: a host or port carrying URL syntax is refused before anything else, without echoing it", () => {

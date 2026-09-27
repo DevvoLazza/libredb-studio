@@ -1524,6 +1524,7 @@ export class SearchHttpTransport implements SearchTransport {
       });
       text = await response.text();
     } catch (error) {
+      if (error instanceof DatabaseConfigError) throw error;
       // A refused socket, an unresolvable host, an abort and a truncated body all
       // arrive here, and all have to leave as the seam's own error type.
       throw requestFailure(this.spec, error, signal);

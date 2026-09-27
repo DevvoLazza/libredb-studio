@@ -503,7 +503,7 @@ export class LibSQLProvider extends SQLBaseProvider {
 
   private describeConnectFailure(error: unknown): Error {
     const mapped = this.mapLibSQLError(error);
-    if (mapped instanceof AuthenticationError) return mapped;
+    if (mapped instanceof AuthenticationError || mapped instanceof DatabaseConfigError) return mapped;
 
     return new ConnectionError(
       `Failed to connect to libSQL: ${mapped.message}`,

@@ -639,7 +639,7 @@ export class TrinoProvider extends SQLBaseProvider {
     const mapped = this.mapTrinoError(error);
     // A refused credential is not a connectivity problem, and saying so would send
     // the user to check their host.
-    if (mapped instanceof AuthenticationError) return mapped;
+    if (mapped instanceof AuthenticationError || mapped instanceof DatabaseConfigError) return mapped;
 
     return new ConnectionError(
       `Failed to connect to ${this.dialect.displayName}: ${mapped.message}`,

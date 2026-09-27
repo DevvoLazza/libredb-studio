@@ -49,6 +49,7 @@ describe("opt-in HTTP database destination policy", () => {
   test("keeps public literals and hostnames available in guarded mode", () => {
     process.env[flag] = "1";
     expect(httpOrigin("https", "8.8.8.8", 443).host).toBe("8.8.8.8");
+    expect(httpOrigin("https", "168.63.129.16", 443).host).toBe("168.63.129.16");
     expect(httpOrigin("https", "2606:4700:4700::1111", 443).host).toBe("[2606:4700:4700::1111]");
     expect(httpOrigin("https", "db.example.com", 443).host).toBe("db.example.com");
   });

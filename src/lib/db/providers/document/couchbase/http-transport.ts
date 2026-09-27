@@ -22,6 +22,7 @@ import { promises as dns, type SrvRecord } from "node:dns";
 import { request as httpRequest, type RequestOptions as HttpRequestOptions } from "node:http";
 import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
@@ -292,6 +293,7 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
       redirect: "manual",
     });
   } catch (error) {
+    if (error instanceof DatabaseConfigError) throw error;
     throw networkError(error);
   }
   const text = await response.text();
@@ -336,7 +338,9 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
         ? httpsRequest(options, onResponse)
         : httpRequest(options as HttpRequestOptions, onResponse);
 
-    clientRequest.on("error", (error: Error) => reject(networkError(error)));
+    clientRequest.on("error", (error: Error) =>
+      reject(error instanceof DatabaseConfigError ? error : networkError(error)),
+    );
     if (init.body !== undefined) clientRequest.write(init.body);
     clientRequest.end();
   });

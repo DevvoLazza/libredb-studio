@@ -361,7 +361,7 @@ export class DruidProvider extends SQLBaseProvider {
     const mapped = this.mapDruidError(error);
     // A rejected credential is not a connectivity problem, and saying so would
     // send the user to check their host.
-    if (mapped instanceof AuthenticationError) return mapped;
+    if (mapped instanceof AuthenticationError || mapped instanceof DatabaseConfigError) return mapped;
 
     return new ConnectionError(
       `Failed to connect to Druid: ${mapped.message}`,

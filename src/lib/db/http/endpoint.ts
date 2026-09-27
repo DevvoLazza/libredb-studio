@@ -84,11 +84,9 @@ export function validateHost(host: unknown): string {
 
   const ipv6 = ipv6Literal(host);
   if (ipv6 !== null) {
-    assertPublicLiteralHost(ipv6);
     return `[${ipv6.toLowerCase()}]`;
   }
   if (IPV4.test(host) || isHostname(host)) {
-    assertPublicLiteralHost(host);
     return host.toLowerCase();
   }
 
@@ -108,7 +106,9 @@ export function validatePort(port: unknown): number {
 
 /** Validate a connection's host and port for one scheme. */
 export function httpOrigin(scheme: HttpScheme, host: unknown, port: unknown): HttpOrigin {
-  return { scheme, host: validateHost(host), port: validatePort(port) };
+  const validatedHost = validateHost(host);
+  assertPublicLiteralHost(validatedHost);
+  return { scheme, host: validatedHost, port: validatePort(port) };
 }
 
 /**

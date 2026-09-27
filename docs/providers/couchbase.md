@@ -6,6 +6,8 @@
 > design, architecture, usage, and tests. If you are reading the code, extending Couchbase support,
 > or authoring a new provider, start here.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |

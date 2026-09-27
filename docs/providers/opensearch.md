@@ -8,6 +8,8 @@
 > implementation serves both type-ids**, and the two documents deliberately disagree wherever the two
 > products do.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |

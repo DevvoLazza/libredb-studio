@@ -7,6 +7,8 @@
 > same SQLite. This document is the single reference point for the libSQL provider: design,
 > architecture, usage, and tests.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |

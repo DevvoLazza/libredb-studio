@@ -5,6 +5,8 @@
 > This is the first provider to declare a `queryLanguage` of its own, `promql` beside `sql` and `json`: the editor sends PromQL to the server unchanged.
 > This document is the single reference for the Prometheus provider: design, architecture, usage and tests.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |

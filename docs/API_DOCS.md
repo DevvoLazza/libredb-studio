@@ -2177,7 +2177,7 @@ async function streamAIExplanation(query: string, explainPlan: string) {
 | `ADMIN_EMAIL` | No | Admin login email (default `admin@libredb.org`) |
 | `USER_PASSWORD` | No | Optional lower-privilege account password; the `user` account exists only when this is set |
 | `USER_EMAIL` | No | Regular-user login email (default `user@libredb.org`, only used when `USER_PASSWORD` is set) |
-| `DB_HTTP_BLOCK_PRIVATE_HOSTS` | No | Set to `true` for hosted deployments to refuse HTTP database connections to loopback, private, link-local, unique-local and selected special-use addresses. DNS answers are checked at socket connection time. Unset/`false` allows local databases and SSH tunnels. Invalid values fail closed when an HTTP database connection is used. Does not cover non-HTTP database drivers. |
+| `DB_HTTP_BLOCK_PRIVATE_HOSTS` | No | Off when unset. `true`, `on`, or `1` blocks HTTP database requests to loopback, private, link-local, unique-local and selected special-use addresses; `false`, `off`, or `0` allows them. DNS answers are checked at socket connection time. Invalid values fail closed for HTTP databases. Non-HTTP drivers and SSH tunnel hosts are outside this guard; HTTP connections through an SSH tunnel are refused while it is enabled. |
 | `LLM_PROVIDER` | No | AI provider: gemini, openai, ollama, custom |
 | `LLM_API_KEY` | No | AI provider API key |
 | `LLM_MODEL` | No | AI model name |
